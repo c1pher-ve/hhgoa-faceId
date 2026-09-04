@@ -1,0 +1,9 @@
+# Face detection (SCRFD)
+onnxruntime          # use onnxruntime-gpu instead if CUDA is available
+numpy
+opencv-python
+
+# Reverse image search & URL filtering
+requests
+beautifulsoup4
+lxml                 # faster HTML parser for BeautifulSoup
