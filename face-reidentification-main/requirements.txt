@@ -3,7 +3,10 @@ onnxruntime          # use onnxruntime-gpu instead if CUDA is available
 numpy
 opencv-python
 
-# Reverse image search & URL filtering
+# Browser automation for reverse image search
+playwright           # run: playwright install chromium  (after pip install)
+
+# Social-media URL filtering & page parsing
 requests
 beautifulsoup4
-lxml                 # faster HTML parser for BeautifulSoup
+lxml

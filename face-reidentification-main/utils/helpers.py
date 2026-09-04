@@ -2,7 +2,6 @@ from typing import Optional, Tuple
 
 import cv2
 import numpy as np
-from skimage.transform import SimilarityTransform
 
 # Reference alignment for facial landmarks (ArcFace)
 reference_alignment: np.ndarray = np.array(
@@ -49,12 +48,20 @@ def estimate_norm(landmark: np.ndarray, image_size: int = 112) -> Tuple[np.ndarr
     alignment = reference_alignment * ratio
     alignment[:, 0] += diff_x
 
-    # Compute the transformation matrix
-    transform = SimilarityTransform()
-    transform.estimate(landmark, alignment)
+    # Compute similarity transform using cv2 (no skimage dependency)
+    # estimateAffinePartial2D returns a 2x3 matrix (rotation + uniform scale + translation)
+    matrix, _ = cv2.estimateAffinePartial2D(
+        landmark.reshape(-1, 1, 2),
+        alignment.reshape(-1, 1, 2),
+        method=cv2.LMEDS,
+    )
+    if matrix is None:
+        raise ValueError("Could not estimate affine transform from landmarks.")
 
-    matrix = transform.params[0:2, :]
-    inverse_matrix = np.linalg.inv(transform.params)[0:2, :]
+    # Build full 3x3 homogeneous matrix to compute inverse
+    full = np.eye(3, dtype=np.float64)
+    full[:2, :] = matrix
+    inverse_matrix = np.linalg.inv(full)[:2, :]
 
     return matrix, inverse_matrix
 
