@@ -1,153 +1,358 @@
-# Real-Time Face Re-Identification with FAISS, ArcFace & SCRFD
+﻿# Mantis — Face Re-Identification Pipeline
 
-[![Downloads](https://img.shields.io/github/downloads/yakhyo/face-reidentification/total?color=blue&label=Downloads)](https://github.com/yakhyo/face-reidentification/releases)
-[![GitHub Repo Stars](https://img.shields.io/github/stars/yakhyo/face-reidentification)](https://github.com/yakhyo/face-reidentification/stargazers)
-[![GitHub Repository](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/yakhyo/face-reidentification)
-[![DeepWiki](https://img.shields.io/badge/DeepWiki-Docs-blue)](https://deepwiki.com/yakhyo/face-reidentification)
+> **Reverse-image-search a face, verify it is the same person using AI, and optionally notarise the findings immutably on the blockchain.**
 
-> [!TIP]
-> The models and functionality in this repository are **integrated into [UniFace](https://github.com/yakhyo/uniface)** — an all-in-one face analysis library.<br>
-> [![PyPI Version](https://img.shields.io/pypi/v/uniface.svg)](https://pypi.org/project/uniface/) [![GitHub Stars](https://img.shields.io/github/stars/yakhyo/uniface)](https://github.com/yakhyo/uniface/stargazers) [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+---
 
-<!--
-<h5 align="center"> If you like our project, please give us a star ⭐ on GitHub for the latest updates.</h5>
--->
+## What This Is
 
-<video controls autoplay loop src="https://github.com/user-attachments/assets/16d63ac6-57a4-464b-8d82-948e1a06b6e3" muted="false" width="100%"></video>
+Mantis is a privacy-intelligence pipeline that takes a single photo as input and automatically discovers where that person appears across public social-media platforms. Unlike a naive reverse-image search (which returns anything visually similar — dog posts, landscapes, memes), Mantis applies **two layers of AI-powered verification** to ensure every result actually contains the same person.
 
-## Key Features
+The system runs fully locally, operates in headless mode by default, and produces machine-readable JSON output. An optional blockchain mode writes a tamper-evident, timestamped proof of the findings to the Polygon network.
 
-- **Real-Time Face Recognition**: Process webcam or video files with SCRFD detection and ArcFace embeddings
-- **FAISS Similarity Search**: Batch cosine-similarity lookup using a FAISS inner-product index
-- **Multiple Model Sizes**: Choose from lightweight to high-accuracy detection and recognition models
-- **Minimal Dependencies**: Built on ONNX Runtime, OpenCV, NumPy, and FAISS with no extra frameworks
+---
 
-> [!NOTE]
-> Place your target face images in the `assets/faces/` directory. The filenames will be used as identity labels during recognition.
-
-## Components
-
-1. **SCRFD** — Sample and Computation Redistribution for Efficient Face Detection
-2. **ArcFace** — Additive Angular Margin Loss for Deep Face Recognition
-3. **FAISS** — Facebook AI Similarity Search
-
-### Available Models
-
-| Category | Model | Size | Description |
-|----------|-------|------|-------------|
-| Detection | SCRFD 500M | 2.41 MB | Lightweight face detection |
-| Detection | SCRFD 2.5G | 3.14 MB | Balanced performance |
-| Detection | SCRFD 10G | 16.1 MB | High accuracy |
-| Recognition | ArcFace MobileFace | 12.99 MB | Mobile-friendly recognition |
-| Recognition | ArcFace ResNet-50 | 166 MB | High-accuracy recognition |
-
-## Project Structure
+## Pipeline Architecture
 
 ```
-├── assets/
-│   ├── demo.mp4
-│   ├── in_video.mp4
-│   └── faces/              # Place target face images here
-│       ├── face1.jpg
-│       ├── face2.jpg
-│       └── ...
-├── database/               # FAISS database implementation
-├── models/                 # Neural network models
-├── weights/                # Model weights (download required)
-├── utils/                  # Helper functions
-├── main.py                 # Main application entry
-└── requirements.txt        # Dependencies
+Input Photo
+      |
+      v
++------------------------------------------------------+
+|  Step 1 . Face Detection & Crop  (SCRFD det_10g)     |
+|  Detects the largest face, pads the bounding box,    |
+|  and extracts a clean face crop.                     |
++-------------------------+----------------------------+
+                          |
+                          v
++------------------------------------------------------+
+|  Step 1b . Query Embedding  (ArcFace w600k_r50)      |
+|  Aligns the face crop and encodes it as a            |
+|  512-dimensional identity vector for later           |
+|  comparison against search results.                  |
++-------------------------+----------------------------+
+                          |
+                          v
++------------------------------------------------------+
+|  Step 2 . Reverse Image Search  (Playwright)         |
+|  Uploads the face crop to Yandex Images,             |
+|  Bing Visual Search, and TinEye in sequence.         |
+|  Collects and deduplicates all result URLs.          |
+|  (~70 raw URLs typically)                            |
++-------------------------+----------------------------+
+                          |
+                          v
++------------------------------------------------------+
+|  Step 3 . Social-Media Domain Filter                 |
+|  Keeps only URLs on known platforms:                 |
+|  Instagram . Facebook . YouTube . Twitter/X          |
+|  Reddit . TikTok . LinkedIn . Pinterest . Tumblr     |
+|  Flickr . VK . Snapchat . Threads . 500px           |
+|  (~10-15 URLs typically)                             |
++-------------------------+----------------------------+
+                          |
+                          v
++------------------------------------------------------+
+|  Step 3b . Two-Stage Face Verification               |
+|                                                      |
+|  For each result URL:                                |
+|  +---------------------------------------------------+|
+|  |  Stage 1 . Face Presence Check  (SCRFD)          ||
+|  |  Fetches og:image / twitter:image from page.     ||
+|  |  Runs SCRFD on it.                               ||
+|  |  No face detected -> DROPPED                     ||
+|  |  (eliminates dog posts, landscapes, memes)       ||
+|  +------------------------+-------------------------+|
+|                           | face found               |
+|  +------------------------v-------------------------+|
+|  |  Stage 2 . Identity Match  (ArcFace)            ||
+|  |  Encodes the face on the result page.            ||
+|  |  Computes cosine similarity vs. query embed.     ||
+|  |  Below threshold (0.35) -> DROPPED              ||
+|  |  (eliminates different people)                   ||
+|  +---------------------------------------------------+|
++-------------------------+----------------------------+
+                          | verified matches only
+                          v
++------------------------------------------------------+
+|  Step 4 . Output                                     |
+|  Prints grouped results to stdout.                   |
+|  Saves results.json with URL + platform + similarity.|
++-------------------------+----------------------------+
+                          | (optional --blockchain flag)
+                          v
++------------------------------------------------------+
+|  Step 5 . Blockchain Notarisation  (Polygon Amoy)    |
+|  Sends a zero-value Polygon transaction containing:  |
+|    . SHA-256 hash of the face crop image             |
+|    . SHA-256 hash of the full result record          |
+|    . All found URLs, engines used, timestamp         |
+|  Returns a PolygonScan URL as immutable proof.       |
++------------------------------------------------------+
 ```
 
-## Getting Started
+---
 
-### Prerequisites
+## Models Used
 
-> [!IMPORTANT]
-> Make sure you have Python 3.10+ installed on your system.
+| Model | Weight File | Size | Purpose |
+|---|---|---|---|
+| **SCRFD** (`det_10g`) | `weights/det_10g.onnx` | ~16 MB | Face detection — finds & crops faces in any image |
+| **ArcFace** (`w600k_r50`) | `weights/w600k_r50.onnx` | ~174 MB | Face recognition — produces 512-d identity embeddings |
 
-### Installation
+Both models run on CPU via ONNX Runtime. GPU acceleration (CUDA) is used automatically if available.
 
-1. **Clone the repository:**
-```bash
-git clone https://github.com/yakhyo/face-reidentification.git
-cd face-reidentification
+---
+
+## File Structure
+
+```
+face-reidentification-main/
+|
++-- pipeline.py          <- Main entry point — orchestrates all steps
++-- face_verifier.py     <- Two-stage result filter (face presence + identity match)
++-- searcher.py          <- Playwright-based Yandex / Bing / TinEye scraper
++-- downloader.py        <- Social-media domain registry and URL filter
++-- blockchain.py        <- Polygon blockchain record writer and verifier
+|
++-- models/
+|   +-- scrfd.py         <- SCRFD face detector wrapper (ONNX Runtime)
+|   +-- arcface.py       <- ArcFace face recognizer wrapper (ONNX Runtime)
+|
++-- utils/
+|   +-- helpers.py       <- Face alignment, cosine similarity, bbox drawing
+|   +-- logging.py       <- Structured file + console logging setup
+|
++-- weights/
+    +-- det_10g.onnx     <- SCRFD detection model
+    +-- w600k_r50.onnx   <- ArcFace recognition model
 ```
 
-2. **Install dependencies:**
+---
+
+## Installation
+
+### 1. Install Python dependencies
+
 ```bash
 pip install -r requirements.txt
+playwright install chromium
 ```
 
-3. **Download model weights:**
+### 2. Download model weights
 
-<details>
-<summary>Click to see download links 📥</summary>
+**Windows (PowerShell):**
+```powershell
+python -c "
+import requests
+print('Downloading SCRFD...')
+open('weights/det_10g.onnx','wb').write(requests.get('https://github.com/yakhyo/face-reidentification/releases/download/v0.0.1/det_10g.onnx').content)
+print('Downloading ArcFace...')
+open('weights/w600k_r50.onnx','wb').write(requests.get('https://github.com/yakhyo/face-reidentification/releases/download/v0.0.1/w600k_r50.onnx').content)
+print('Done.')
+"
+```
 
-| Model | Download Link | Size |
-|-------|--------------|------|
-| SCRFD 500M | [det_500m.onnx](https://github.com/yakhyo/face-reidentification/releases/download/v0.0.1/det_500m.onnx) | 2.41 MB |
-| SCRFD 2.5G | [det_2.5g.onnx](https://github.com/yakhyo/face-reidentification/releases/download/v0.0.1/det_2.5g.onnx) | 3.14 MB |
-| SCRFD 10G | [det_10g.onnx](https://github.com/yakhyo/face-reidentification/releases/download/v0.0.1/det_10g.onnx) | 16.1 MB |
-| ArcFace MobileFace | [w600k_mbf.onnx](https://github.com/yakhyo/face-reidentification/releases/download/v0.0.1/w600k_mbf.onnx) | 12.99 MB |
-| ArcFace ResNet-50 | [w600k_r50.onnx](https://github.com/yakhyo/face-reidentification/releases/download/v0.0.1/w600k_r50.onnx) | 166 MB |
-
-</details>
-
-**Quick download (Linux/Mac):**
+**Linux / macOS:**
 ```bash
-sh download.sh
+bash download.sh
 ```
 
-4. **Add target faces:**
-Place face images in `assets/faces/` directory. The filename will be used as the person's identity.
+---
 
 ## Usage
 
-### Basic Usage
-```bash
-python main.py --source assets/in_video.mp4
-```
-
-### Command Line Arguments
-
-> [!TIP]
-> Use these arguments to customize the recognition behavior:
+### Find social-media links for a face (basic)
 
 ```bash
-usage: main.py [-h] [--det-weight DET_WEIGHT] [--rec-weight REC_WEIGHT]
-               [--similarity-thresh SIMILARITY_THRESH] [--confidence-thresh CONFIDENCE_THRESH]
-               [--faces-dir FACES_DIR] [--source SOURCE] [--max-num MAX_NUM]
+python pipeline.py --input photo.jpg
 ```
 
-| Argument | Description | Default |
-|----------|-------------|---------|
-| `--det-weight` | Detection model path | `./weights/det_10g.onnx` |
-| `--rec-weight` | Recognition model path | `./weights/w600k_mbf.onnx` |
-| `--similarity-thresh` | Face similarity threshold | `0.4` |
-| `--confidence-thresh` | Detection confidence threshold | `0.5` |
-| `--faces-dir` | Target faces directory | `./assets/faces` |
-| `--source` | Video source (file or camera index) | `./assets/in_video.mp4` |
-| `--max-num` | Max faces per frame (0 = unlimited) | `0` |
-| `--db-path` | Custom database storage location | `./database/face_database` |
-| `--update-db` | Force rebuild face database | `False` |
-| `--output` | Specify output video path | `output_video.mp4` |
+### Save verified results to JSON
 
-## Technical Notes
+```bash
+python pipeline.py --input photo.jpg --output results.json
+```
 
-- Face database is saved to and loaded from disk automatically; no rebuild needed on restart
-- All detected faces in a frame are queried in a single FAISS `index.search()` call
-- For GPU-accelerated inference, install `onnxruntime-gpu` instead of `onnxruntime`
+**Example `results.json` output:**
+```json
+[
+  {
+    "url": "https://www.instagram.com/p/ABC123/",
+    "platform": "Instagram",
+    "similarity": 0.512
+  },
+  {
+    "url": "https://www.youtube.com/watch?v=XYZ789",
+    "platform": "YouTube",
+    "similarity": 0.441
+  }
+]
+```
 
-## References
+The `similarity` field (0-1) shows how closely the face in that post matches the query photo.
 
-> [!NOTE]
-> This project builds upon the following research:
+### Show browser window (debug)
 
-1. [SCRFD: Sample and Computation Redistribution for Efficient Face Detection](https://github.com/deepinsight/insightface/tree/master/detection/scrfd)
-2. [ArcFace: Additive Angular Margin Loss for Deep Face Recognition](https://github.com/deepinsight/insightface/tree/master/recognition/arcface_torch)
+```bash
+python pipeline.py --input photo.jpg --show-browser
+```
 
-<!-- ## Support
+### Write results to the blockchain
 
-If you find this project useful, please consider giving it a star on GitHub! -->
+```bash
+# One-time wallet setup
+python blockchain.py --generate-wallet
+# Fund the printed address at https://faucet.polygon.technology/ (Amoy testnet)
 
+# Run with blockchain recording (PowerShell)
+$env:WALLET_PRIVATE_KEY = "0xyour_private_key_here"
+python pipeline.py --input photo.jpg --output results.json --blockchain
+```
+
+**Output on success:**
+```
+======================================================================
+  BLOCKCHAIN RECORD WRITTEN
+======================================================================
+  TX Hash    : 0xabc123...def456
+  Block      : #12345678
+  Network    : polygon-amoy
+  Explorer   : https://amoy.polygonscan.com/tx/0xabc123...
+  Record Hash: d615e4ed...
+======================================================================
+```
+
+A `.receipt.json` file is also saved alongside `results.json`.
+
+### Verify a past blockchain record
+
+```bash
+python blockchain.py --verify 0xyour_tx_hash_here
+```
+
+---
+
+## CLI Reference
+
+```
+python pipeline.py [OPTIONS]
+
+Required:
+  --input  / -i   PATH    Path to input photo (jpg / png)
+
+Optional:
+  --output / -o   PATH    Save results as JSON
+  --det-weight    PATH    SCRFD model  (default: ./weights/det_10g.onnx)
+  --rec-weight    PATH    ArcFace model (default: ./weights/w600k_r50.onnx)
+  --conf-thresh   FLOAT   Face detection confidence threshold (default: 0.5)
+  --padding       FLOAT   Padding fraction around face crop (default: 0.2)
+  --show-browser          Show Chromium window during search
+  --blockchain            Write result record to Polygon blockchain
+  --network       NAME    Blockchain network:
+                            polygon-amoy     (default — free test MATIC)
+                            polygon-mainnet  (real MATIC)
+                            ethereum-sepolia (ETH testnet)
+```
+
+---
+
+## How the Identity Verification Works
+
+The `face_verifier.py` module runs after the social-media domain filter and eliminates false positives that reverse-image search cannot catch on its own.
+
+### Stage 1 — Face Presence (SCRFD)
+
+For each result URL:
+1. Fetches the page HTML
+2. Extracts the best image URL: `og:image` -> `twitter:image` -> first `<img>` tag
+3. Runs SCRFD on that image
+4. If no human face detected at >= 0.45 confidence -> **DROPPED**
+
+This eliminates dog posts, cat photos, landscapes, products, and memes.
+
+### Stage 2 — Identity Match (ArcFace cosine similarity)
+
+For results that pass Stage 1:
+1. ArcFace aligns the detected face to a canonical 112x112 crop
+2. Encodes it as a normalised 512-dimensional embedding
+3. Computes cosine similarity against the query face embedding
+4. If similarity < `SIMILARITY_THRESHOLD` -> **DROPPED** (different person)
+5. If similarity >= threshold -> **KEPT** with score attached
+
+**Fail-safe:** If a page is inaccessible (login wall, network error), the result is kept by default. Genuine matches are never silently discarded due to access issues.
+
+### Tuning sensitivity
+
+Edit `SIMILARITY_THRESHOLD` in `face_verifier.py`:
+
+```python
+SIMILARITY_THRESHOLD: float = 0.35   # 0.30 loose . 0.40 balanced . 0.50 strict
+```
+
+---
+
+## How Blockchain Notarisation Works
+
+When `--blockchain` is passed, the pipeline constructs a `SearchRecord` containing:
+
+| Field | Value |
+|---|---|
+| `image_hash` | SHA-256 of the face crop JPEG bytes |
+| `timestamp_utc` | Unix timestamp (seconds) of the search |
+| `urls_found` | All verified social-media URLs |
+| `engines_used` | `["Yandex", "Bing", "TinEye"]` |
+| `total_raw_urls` | Total URLs scraped before filtering |
+| `record_hash` | SHA-256 of all the above (tamper-proof fingerprint) |
+
+This record is JSON-encoded and written to the `data` field of a zero-value Polygon transaction with the prefix `MANTIS_FACEID:`.
+
+Because the **image hash** proves which face was searched, the **record hash** cannot be altered after block inclusion, and the **block timestamp** is set by the Polygon network — the record is **cryptographically tamper-evident** and permanently verifiable by anyone with the transaction hash.
+
+---
+
+## Blockchain Networks
+
+| Key | Network | Chain ID | Notes |
+|---|---|---|---|
+| `polygon-amoy` | Polygon Amoy Testnet | 80002 | **Default.** Free test MATIC from faucet |
+| `polygon-mainnet` | Polygon Mainnet | 137 | Production. Real MATIC required |
+| `ethereum-sepolia` | Ethereum Sepolia | 11155111 | Ethereum testnet alternative |
+
+Free test MATIC faucet: **https://faucet.polygon.technology/**
+
+---
+
+## Requirements
+
+```
+python >= 3.10
+onnxruntime          # use onnxruntime-gpu for CUDA acceleration
+numpy
+opencv-python
+playwright           # run: playwright install chromium
+requests
+beautifulsoup4
+lxml
+web3                 # only needed for --blockchain
+```
+
+---
+
+## Known Limitations
+
+| Limitation | Detail |
+|---|---|
+| Login-walled pages | Instagram/Facebook pages requiring login cannot be fetched — results are kept by default (fail-safe) |
+| Search engine UI drift | Yandex/Bing/TinEye update their selectors periodically; check `searcher.py` if timeouts increase |
+| Threshold tuning | `0.35` works well for frontal photos; lower-quality or profile-angle photos may need a lower threshold |
+| Blockchain gas | Use the free Amoy testnet faucet for testing; mainnet requires real MATIC for gas fees |
+
+---
+
+## Credits
+
+- Face detection & recognition: [InsightFace / SCRFD + ArcFace](https://github.com/deepinsight/insightface)
+- Model weights hosted by: [yakhyo/face-reidentification](https://github.com/yakhyo/face-reidentification)
+- Browser automation: [Playwright](https://playwright.dev/)
+- Blockchain: [Polygon](https://polygon.technology/) and [web3.py](https://web3py.readthedocs.io/)
