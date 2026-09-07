@@ -10,3 +10,6 @@ playwright           # run: playwright install chromium  (after pip install)
 requests
 beautifulsoup4
 lxml
+
+# Blockchain record writing
+web3
